@@ -13,6 +13,22 @@ set(TFM "net9.0" CACHE STRING "Target Framework Moniker")
 set(MANAGED_PROJ_DIR "${CMAKE_SOURCE_DIR}/ManagedLibrary")
 set(NATIVE_DIR "${CMAKE_SOURCE_DIR}/NativeHost")
 
+# Allow override of the .NET Runtime Identifier (RID)
+set(DOTNET_RID "" CACHE STRING "dotnet RID, e.g. linux-x64 | linux-arm64 | linux-arm")
+if(NOT DOTNET_RID)
+    if(UNIX AND NOT APPLE)
+        if(CMAKE_SYSTEM_PROCESSOR MATCHES "x86_64|amd64")
+            set(DOTNET_RID "linux-x64")
+        elseif(CMAKE_SYSTEM_PROCESSOR MATCHES "aarch64|arm64")
+            set(DOTNET_RID "linux-arm64")
+        elseif(CMAKE_SYSTEM_PROCESSOR MATCHES "armv7l|armv8l|armv7")
+            set(DOTNET_RID "linux-arm")
+        else()
+            set(DOTNET_RID "linux-x64") # fallback
+        endif()
+    endif()
+endif()
+
 # Managed publish output folder in CMake build tree:
 set(MANAGED_OUT "${CMAKE_BINARY_DIR}/managed/${CONFIG}/${TFM}")
 
@@ -37,21 +53,42 @@ if(NOT DOTNET_ROOT)
     set(DOTNET_ROOT "/usr/share/dotnet")
 endif()
 
-file(GLOB HOST_PACK_DIRS "${DOTNET_ROOT}/packs/Microsoft.NETCore.App.Host.linux-x64/*")
+# Pack path varies by RID
+file(GLOB HOST_PACK_DIRS "${DOTNET_ROOT}/packs/Microsoft.NETCore.App.Host.${DOTNET_RID}/*")
 if(HOST_PACK_DIRS)
     list(SORT HOST_PACK_DIRS)
     list(REVERSE HOST_PACK_DIRS)
     list(GET HOST_PACK_DIRS 0 HOST_PACK_DIR)  # newest
 else()
     message(FATAL_ERROR
-            "Could not find Microsoft.NETCore.App.Host.linux-x64 pack under ${DOTNET_ROOT}/packs.\n"
-            "Ensure the .NET SDK is installed or set:\n"
-            "  -DNETHOST_INCLUDE_DIR=/path/...  -DNETHOST_LIB=/path/...  -DHOSTFXR_INCLUDE_DIR=/path/...")
+            "Could not find Microsoft.NETCore.App.Host.${DOTNET_RID} pack under ${DOTNET_ROOT}/packs.\n"
+            "Ensure the .NET SDK is installed or set overrides:\n"
+            "  -DNETHOST_INCLUDE_DIR=  -DNETHOST_LIB=  -DHOSTFXR_INCLUDE_DIR=")
 endif()
 
-# Paths inside the Host pack
-set(DEFAULT_NETHOST_NATIVE_DIR "${HOST_PACK_DIR}/runtimes/linux-x64/native")
-set(DEFAULT_HOSTFXR_INCLUDE_DIR "${HOST_PACK_DIR}/runtimes/linux-x64/native")
+# Default locations inside the Host pack
+set(DEFAULT_NETHOST_NATIVE_DIR "${HOST_PACK_DIR}/runtimes/${DOTNET_RID}/native")
+
+# Hostfxr & CoreCLR headers live in one of these on different SDKs/installers
+set(_HOSTFXR_CANDIDATES
+        "${HOST_PACK_DIR}/runtimes/${DOTNET_RID}/native"
+        "${HOST_PACK_DIR}/include"
+)
+
+unset(DEFAULT_HOSTFXR_INCLUDE_DIR)
+foreach(dir IN LISTS _HOSTFXR_CANDIDATES)
+    if(EXISTS "${dir}/hostfxr.h" AND EXISTS "${dir}/coreclr_delegates.h")
+        set(DEFAULT_HOSTFXR_INCLUDE_DIR "${dir}")
+        break()
+    endif()
+endforeach()
+
+if(NOT DEFAULT_HOSTFXR_INCLUDE_DIR)
+    message(FATAL_ERROR
+            "Could not find hostfxr.h & coreclr_delegates.h under:\n"
+            "  ${HOST_PACK_DIR}/runtimes/${DOTNET_RID}/native\n"
+            "  ${HOST_PACK_DIR}/include")
+endif()
 
 # Allow manual override
 set(NETHOST_INCLUDE_DIR "${DEFAULT_NETHOST_NATIVE_DIR}" CACHE PATH "Dir that contains nethost.h")
@@ -82,6 +119,7 @@ if(NOT NETHOST_LIB)
 endif()
 
 message(STATUS "DOTNET_ROOT:           ${DOTNET_ROOT}")
+message(STATUS "DOTNET_RID:            ${DOTNET_RID}")
 message(STATUS "Using nethost include: ${NETHOST_INCLUDE_DIR}")
 message(STATUS "Using hostfxr include: ${HOSTFXR_INCLUDE_DIR}")
 message(STATUS "Using nethost lib:     ${NETHOST_LIB}")
@@ -90,7 +128,8 @@ message(STATUS "Using nethost lib:     ${NETHOST_LIB}")
 file(GLOB HOST_SOURCES
         "${NATIVE_DIR}/*.c"
         "${NATIVE_DIR}/*.cc"
-        "${NATIVE_DIR}/*.cpp")
+        "${NATIVE_DIR}/*.cpp"
+)
 if(NOT HOST_SOURCES)
     message(FATAL_ERROR "No host sources found under ${NATIVE_DIR}. Add your host .c/.cpp file(s) there.")
 endif()
@@ -98,17 +137,23 @@ endif()
 add_executable(host_native ${HOST_SOURCES})
 target_include_directories(host_native PRIVATE "${NETHOST_INCLUDE_DIR}" "${HOSTFXR_INCLUDE_DIR}")
 
-# Link nethost + needed system libs; add exports + rpath so P/Invoke("__Internal") works and libnethost is found.
+# Link nethost + needed system libs; add exports + RPATH so __Internal works and libnethost is found.
 if(UNIX AND NOT APPLE)
     target_link_libraries(host_native PRIVATE "${NETHOST_LIB}" dl pthread)
     # Export native symbols from the executable for DllImport("__Internal")
     target_link_options(host_native PRIVATE "-Wl,--export-dynamic")
-    # Help the loader find libnethost.so at runtime (kept when we copy the exe)
-    set_target_properties(host_native PROPERTIES BUILD_RPATH "${DEFAULT_NETHOST_NATIVE_DIR}")
+    # Prefer the local copy next to the staged host; also fall back to the pack path.
+    set_target_properties(host_native PROPERTIES
+            BUILD_RPATH "\$ORIGIN;${DEFAULT_NETHOST_NATIVE_DIR}"
+            INSTALL_RPATH "\$ORIGIN"
+    )
 elseif(APPLE)
     target_link_libraries(host_native PRIVATE "${NETHOST_LIB}")
     target_link_options(host_native PRIVATE "-Wl,-export_dynamic")
-    set_target_properties(host_native PROPERTIES BUILD_RPATH "${DEFAULT_NETHOST_NATIVE_DIR}")
+    set_target_properties(host_native PROPERTIES
+            BUILD_RPATH "@loader_path"
+            INSTALL_RPATH "@loader_path"
+    )
 elseif(WIN32)
     # On Windows, nethost is usually a static .lib; exporting isn't needed for __Internal.
     target_link_libraries(host_native PRIVATE "${NETHOST_LIB}")
@@ -117,7 +162,8 @@ endif()
 
 # Put the native binary somewhere stable in the build tree
 set_target_properties(host_native PROPERTIES
-        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/native")
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/native"
+)
 
 # After building native + managed, copy the host next to the managed outputs
 add_custom_command(TARGET host_native POST_BUILD

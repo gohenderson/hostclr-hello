@@ -1,21 +1,24 @@
-﻿using System;
+﻿// ManagedLibrary/Library.cs
+using System;
 using System.Runtime.InteropServices;
+using System.Runtime.CompilerServices;
 
 namespace ManagedLibrary
 {
-    public class Library
+    public static class Library
     {
-        // Install early, before any P/Invoke to "__Internal"
-        static Library()
+        // Install the resolver as soon as the assembly loads.
+        [ModuleInitializer]
+        internal static void Init()
         {
             NativeLibrary.SetDllImportResolver(typeof(Library).Assembly, (name, asm, path) =>
             {
                 if (name == "__Internal")
                 {
-                    // Get handle to the main program (current process)
+                    // Map "__Internal" to the current process on Linux (dlopen(NULL, ...))
                     return dlopen(null, RTLD_NOW | RTLD_GLOBAL);
                 }
-                return IntPtr.Zero;
+                return IntPtr.Zero; // Defer to default
             });
         }
 
@@ -32,7 +35,7 @@ namespace ManagedLibrary
         public static void SayHello()
         {
             Console.WriteLine("Hello from C#!");
-            Console.WriteLine($"C# called C++: 4 + 5 = {AddNumbers(4,5)}");
+            Console.WriteLine($"C# called C++: 4 + 5 = {AddNumbers(4, 5)}");
         }
     }
 }
