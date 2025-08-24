@@ -7,14 +7,23 @@
 #include <coreclr_delegates.h>
 #include <hostfxr.h>
 
-// POSIX / Linux bits we were missing
-#include <dlfcn.h>     // dlopen, dlsym, RTLD_*
-#include <limits.h>    // PATH_MAX
-#include <unistd.h>    // readlink
-#include <libgen.h>    // dirname
+// POSIX / Linux bits
+#include <dlfcn.h>
+#include <limits.h>
+#include <unistd.h>
+#include <libgen.h>
 #include <string.h>
 
-// Helper to load hostfxr and get needed exports
+// --------- NEW: Exported native function callable from C# ----------
+extern "C"
+__attribute__((visibility("default")))
+int add_numbers(int a, int b)
+{
+    std::cout << "[native] add_numbers(" << a << ", " << b << ")\n";
+    return a + b;
+}
+// ------------------------------------------------------------------
+
 struct hostfxr_exports {
     hostfxr_initialize_for_runtime_config_fn initialize = nullptr;
     hostfxr_get_runtime_delegate_fn           get_delegate = nullptr;
@@ -27,10 +36,8 @@ static bool load_hostfxr_exports(hostfxr_exports& out, const std::string& runtim
     char hostfxr_path[1024];
     size_t size = sizeof(hostfxr_path);
 
-    get_hostfxr_parameters params;
-    memset(&params, 0, sizeof(params));
+    get_hostfxr_parameters params{};
     params.size = sizeof(params);
-    // Point to the runtimeconfig so hostfxr is resolved beside it
     params.assembly_path = runtimeconfig_path.c_str();
 
     int rc = get_hostfxr_path(hostfxr_path, &size, &params);
@@ -109,7 +116,7 @@ int main(int /*argc*/, char* /*argv*/[]) {
     rc = load_asm_and_get_ptr(
         assembly_path.c_str(),
         "ManagedLibrary.Library, ManagedLibrary",
-        "SayHello", // <-- use the managed method name (PascalCase)
+        "SayHello",
         UNMANAGEDCALLERSONLY_METHOD,
         nullptr,
         (void**)&say_hello);
