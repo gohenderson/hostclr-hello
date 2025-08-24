@@ -106,21 +106,13 @@ int main(int /*argc*/, char* /*argv*/[]) {
     typedef void (CORECLR_DELEGATE_CALLTYPE *say_hello_fn)();
     say_hello_fn say_hello = nullptr;
 
-	rc = load_asm_and_get_ptr(
-	    assembly_path.c_str(),
-	    "ManagedLibrary.Library, ManagedLibrary",
-	    "SayHello", // <-- use the managed method name (PascalCase)
-	    UNMANAGEDCALLERSONLY_METHOD,
-	    nullptr,
-	    (void**)&say_hello);
-
-//    rc = load_asm_and_get_ptr(
-//        assembly_path.c_str(),
-//        "ManagedLibrary.Library, ManagedLibrary", // type name
-//        "say_hello",                              // EntryPoint from C#
-//        UNMANAGEDCALLERSONLY_METHOD,
-//        nullptr,
-//        (void**)&say_hello);
+    rc = load_asm_and_get_ptr(
+        assembly_path.c_str(),
+        "ManagedLibrary.Library, ManagedLibrary",
+        "SayHello", // <-- use the managed method name (PascalCase)
+        UNMANAGEDCALLERSONLY_METHOD,
+        nullptr,
+        (void**)&say_hello);
 
     if (rc != 0 || say_hello == nullptr) {
         std::cerr << "load_assembly_and_get_function_pointer failed, rc=" << rc << "\n";
