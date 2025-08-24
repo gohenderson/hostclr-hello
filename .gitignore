@@ -1,0 +1,81 @@
+# ---- OS / Editor junk ----
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+*.tmp
+
+# JetBrains (Rider, CLion) & VS Code
+.idea/
+.run/
+.vscode/
+.vs/
+*.suo
+*.user
+*.userosscache
+*.sln.iml
+*.DotSettings.user
+.ReSharper*/
+*_ReSharper*/
+*.sln.DotSettings
+
+# ---- Logs / dumps ----
+*.log
+logs/
+core
+*.core
+*.dmp
+*.mdmp
+
+# ---- .NET (ManagedLibrary) ----
+**/bin/
+**/obj/
+**/out/
+**/TestResults/
+# If you occasionally publish outside bin/, ignore publish too
+**/publish/
+
+# NuGet packages (if you pack locally)
+*.nupkg
+*.snupkg
+
+# Coverage
+coverage/
+.coverlet/
+*.coverage
+*.coveragexml
+
+# ---- C/C++ / CMake (NativeHost) ----
+# Build trees
+**/cmake-build-*/
+**/CMakeFiles/
+**/CMakeCache.txt
+**/CMakeScripts/
+**/Testing/
+**/Makefile
+**/install_manifest.txt
+**/compile_commands.json
+**/cmake_install.cmake
+
+# Compiled objects / libs / binaries
+*.o
+*.obj
+*.lo
+*.la
+*.lai
+*.a
+*.lib
+*.so
+*.so.*
+*.dylib
+*.dll
+*.exe
+*.pdb
+
+# NativeHost output binary (built by build_host.sh)
+NativeHost/host
+
+# ---- Misc tooling caches ----
+# Uncomment if you generate these locally
+# .nuget/
+# .cache/
