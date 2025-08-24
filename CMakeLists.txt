@@ -29,22 +29,28 @@ if(NOT DOTNET_RID)
     endif()
 endif()
 
-# Managed publish output folder in CMake build tree:
-set(MANAGED_OUT "${CMAKE_BINARY_DIR}/managed/${CONFIG}/${TFM}")
+# -------- Unified output directory at project root --------
+set(OUTPUT_DIR "${CMAKE_SOURCE_DIR}/build")
+file(MAKE_DIRECTORY "${OUTPUT_DIR}")
 
-# Final runnable binary path:
-set(FINAL_HOST_BIN "${MANAGED_OUT}/host")
+# Managed artifacts that dotnet will publish into OUTPUT_DIR
+set(MANAGED_DLL         "${OUTPUT_DIR}/ManagedLibrary.dll")
+set(MANAGED_RUNTIMECFG  "${OUTPUT_DIR}/ManagedLibrary.runtimeconfig.json")
 
-# -------- Managed build (dotnet publish) -----------------
+# Final runnable host path (native exe emitted into OUTPUT_DIR as "host")
+set(FINAL_HOST_BIN "${OUTPUT_DIR}/host")
+
+# -------- Managed build (dotnet publish -> ${PROJECT_ROOT}/build) --------
 add_custom_command(
-        OUTPUT "${MANAGED_OUT}/ManagedLibrary.dll" "${MANAGED_OUT}/ManagedLibrary.runtimeconfig.json"
-        COMMAND "${DOTNET_EXECUTABLE}" publish "${MANAGED_PROJ_DIR}" -c "${CONFIG}" -f "${TFM}" -o "${MANAGED_OUT}"
+        OUTPUT  "${MANAGED_DLL}" "${MANAGED_RUNTIMECFG}"
+        COMMAND "${DOTNET_EXECUTABLE}" publish "${MANAGED_PROJ_DIR}"
+        -c "${CONFIG}" -f "${TFM}" -o "${OUTPUT_DIR}"
         WORKING_DIRECTORY "${MANAGED_PROJ_DIR}"
-        COMMENT "Publishing ManagedLibrary (${CONFIG}|${TFM}) to ${MANAGED_OUT}"
+        COMMENT "Publishing ManagedLibrary (${CONFIG}|${TFM}) to ${OUTPUT_DIR}"
         VERBATIM
 )
 add_custom_target(managed ALL
-        DEPENDS "${MANAGED_OUT}/ManagedLibrary.dll" "${MANAGED_OUT}/ManagedLibrary.runtimeconfig.json"
+        DEPENDS "${MANAGED_DLL}" "${MANAGED_RUNTIMECFG}"
 )
 
 # -------- Discover nethost / hostfxr (Linux defaults; overridable) --------
@@ -53,7 +59,6 @@ if(NOT DOTNET_ROOT)
     set(DOTNET_ROOT "/usr/share/dotnet")
 endif()
 
-# Pack path varies by RID
 file(GLOB HOST_PACK_DIRS "${DOTNET_ROOT}/packs/Microsoft.NETCore.App.Host.${DOTNET_RID}/*")
 if(HOST_PACK_DIRS)
     list(SORT HOST_PACK_DIRS)
@@ -61,15 +66,11 @@ if(HOST_PACK_DIRS)
     list(GET HOST_PACK_DIRS 0 HOST_PACK_DIR)  # newest
 else()
     message(FATAL_ERROR
-            "Could not find Microsoft.NETCore.App.Host.${DOTNET_RID} pack under ${DOTNET_ROOT}/packs.\n"
-            "Ensure the .NET SDK is installed or set overrides:\n"
-            "  -DNETHOST_INCLUDE_DIR=  -DNETHOST_LIB=  -DHOSTFXR_INCLUDE_DIR=")
+            "Could not find Microsoft.NETCore.App.Host.${DOTNET_RID} under ${DOTNET_ROOT}/packs.\n"
+            "Set overrides: -DNETHOST_INCLUDE_DIR=  -DNETHOST_LIB=  -DHOSTFXR_INCLUDE_DIR=")
 endif()
 
-# Default locations inside the Host pack
 set(DEFAULT_NETHOST_NATIVE_DIR "${HOST_PACK_DIR}/runtimes/${DOTNET_RID}/native")
-
-# Hostfxr & CoreCLR headers live in one of these on different SDKs/installers
 set(_HOSTFXR_CANDIDATES
         "${HOST_PACK_DIR}/runtimes/${DOTNET_RID}/native"
         "${HOST_PACK_DIR}/include"
@@ -90,12 +91,10 @@ if(NOT DEFAULT_HOSTFXR_INCLUDE_DIR)
             "  ${HOST_PACK_DIR}/include")
 endif()
 
-# Allow manual override
 set(NETHOST_INCLUDE_DIR "${DEFAULT_NETHOST_NATIVE_DIR}" CACHE PATH "Dir that contains nethost.h")
 set(HOSTFXR_INCLUDE_DIR "${DEFAULT_HOSTFXR_INCLUDE_DIR}" CACHE PATH "Dir that contains hostfxr.h & coreclr_delegates.h")
 set(NETHOST_LIB "" CACHE FILEPATH "Full path to libnethost (e.g., /.../libnethost.so)")
 
-# Validate headers
 if(NOT EXISTS "${NETHOST_INCLUDE_DIR}/nethost.h")
     message(FATAL_ERROR "nethost.h not found in ${NETHOST_INCLUDE_DIR}. Set -DNETHOST_INCLUDE_DIR=/path/to/dir containing nethost.h")
 endif()
@@ -106,7 +105,6 @@ if(NOT EXISTS "${HOSTFXR_INCLUDE_DIR}/coreclr_delegates.h")
     message(FATAL_ERROR "coreclr_delegates.h not found in ${HOSTFXR_INCLUDE_DIR}. Set -DHOSTFXR_INCLUDE_DIR=/path/to/dir containing coreclr_delegates.h")
 endif()
 
-# Pick libnethost if not provided
 if(NOT NETHOST_LIB)
     if(EXISTS "${DEFAULT_NETHOST_NATIVE_DIR}/libnethost.so")
         set(NETHOST_LIB "${DEFAULT_NETHOST_NATIVE_DIR}/libnethost.so")
@@ -123,8 +121,9 @@ message(STATUS "DOTNET_RID:            ${DOTNET_RID}")
 message(STATUS "Using nethost include: ${NETHOST_INCLUDE_DIR}")
 message(STATUS "Using hostfxr include: ${HOSTFXR_INCLUDE_DIR}")
 message(STATUS "Using nethost lib:     ${NETHOST_LIB}")
+message(STATUS "Unified OUTPUT_DIR:    ${OUTPUT_DIR}")
 
-# -------- Native host target (pure CMake) -----------------------
+# -------- Native host target (emits directly to ${PROJECT_ROOT}/build) ------
 file(GLOB HOST_SOURCES
         "${NATIVE_DIR}/*.c"
         "${NATIVE_DIR}/*.cc"
@@ -137,12 +136,9 @@ endif()
 add_executable(host_native ${HOST_SOURCES})
 target_include_directories(host_native PRIVATE "${NETHOST_INCLUDE_DIR}" "${HOSTFXR_INCLUDE_DIR}")
 
-# Link nethost + needed system libs; add exports + RPATH so __Internal works and libnethost is found.
 if(UNIX AND NOT APPLE)
     target_link_libraries(host_native PRIVATE "${NETHOST_LIB}" dl pthread)
-    # Export native symbols from the executable for DllImport("__Internal")
     target_link_options(host_native PRIVATE "-Wl,--export-dynamic")
-    # Prefer the local copy next to the staged host; also fall back to the pack path.
     set_target_properties(host_native PROPERTIES
             BUILD_RPATH "\$ORIGIN;${DEFAULT_NETHOST_NATIVE_DIR}"
             INSTALL_RPATH "\$ORIGIN"
@@ -155,42 +151,35 @@ elseif(APPLE)
             INSTALL_RPATH "@loader_path"
     )
 elseif(WIN32)
-    # On Windows, nethost is usually a static .lib; exporting isn't needed for __Internal.
     target_link_libraries(host_native PRIVATE "${NETHOST_LIB}")
     set_target_properties(host_native PROPERTIES ENABLE_EXPORTS ON)
 endif()
 
-# Put the native binary somewhere stable in the build tree
+# Emit the native exe directly into ${PROJECT_ROOT}/build as "host"
 set_target_properties(host_native PROPERTIES
-        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/native"
+        RUNTIME_OUTPUT_DIRECTORY "${OUTPUT_DIR}"
+        OUTPUT_NAME "host"
 )
 
-# After building native + managed, copy the host next to the managed outputs
-add_custom_command(TARGET host_native POST_BUILD
-        COMMAND ${CMAKE_COMMAND} -E copy "$<TARGET_FILE:host_native>" "${FINAL_HOST_BIN}"
-        COMMENT "Staging host next to managed outputs: ${FINAL_HOST_BIN}"
-)
+# Ensure native waits for managed publish (so runtimeconfig is present)
+add_dependencies(host_native managed)
 
 # Also copy libnethost.so beside the staged host on Unix (extra safety)
 if(UNIX AND NOT APPLE)
     get_filename_component(NETHOST_LIB_NAME "${NETHOST_LIB}" NAME)
     add_custom_command(TARGET host_native POST_BUILD
-            COMMAND ${CMAKE_COMMAND} -E copy_if_different "${NETHOST_LIB}" "${MANAGED_OUT}/${NETHOST_LIB_NAME}"
-            COMMENT "Copying ${NETHOST_LIB_NAME} to ${MANAGED_OUT}"
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different "${NETHOST_LIB}" "${OUTPUT_DIR}/${NETHOST_LIB_NAME}"
+            COMMENT "Copying ${NETHOST_LIB_NAME} to ${OUTPUT_DIR}"
     )
 endif()
 
-# Ensure native copies only after managed publish exists
-add_dependencies(host_native managed)
-
-# -------- Expose a runnable target for CLion --------------------
+# -------- Runnable/imported target and CTest ---------------------
 add_executable(hostclr IMPORTED GLOBAL)
 set_target_properties(hostclr PROPERTIES IMPORTED_LOCATION "${FINAL_HOST_BIN}")
 add_dependencies(hostclr host_native managed)
 
-# -------- Optional: ctest to run it -----------------------------
 enable_testing()
 add_test(NAME run_hostclr
         COMMAND "${FINAL_HOST_BIN}"
-        WORKING_DIRECTORY "${MANAGED_OUT}"
+        WORKING_DIRECTORY "${OUTPUT_DIR}"
 )
