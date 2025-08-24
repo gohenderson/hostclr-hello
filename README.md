@@ -6,21 +6,39 @@ This README captures the exact steps, commands, and gotchas we used to get from 
 
 ---
 
-## TL;DR — One‑shot setup & run
+## TL;DR — One‑shot setup & run (build_run.sh)
 ```bash
+#!/usr/bin/env bash
+set -euo pipefail
+
+have_dotnet9() {
+  command -v dotnet >/dev/null 2>&1 && dotnet --list-sdks 2>/dev/null | awk '{print $1}' | grep -q '^9\.'
+}
+
 # 0) Prereqs
-sudo apt update
-sudo apt install -y dotnet-sdk-9.0 g++ build-essential
+if ! have_dotnet9; then
+  echo "[.NET] 9.x SDK not found; installing..."
+  wget https://packages.microsoft.com/config/debian/12/packages-microsoft-prod.deb -O packages-microsoft-prod.deb
+  sudo dpkg -i packages-microsoft-prod.deb
+  rm -f packages-microsoft-prod.deb
+  sudo apt update
+  sudo apt install -y dotnet-sdk-9.0
+else
+  echo "[.NET] 9.x SDK already present; skipping installation."
+fi
+
+# Ensure native build deps (install regardless)
+sudo apt install -y g++ build-essential
 
 # 1) Build the managed component (framework-dependent, emits runtimeconfig)
 cd ManagedLibrary
- dotnet build -c Release
+dotnet build -c Release
 cd ..
 
 # 2) Build the native host (auto-finds headers/libs)
 cd NativeHost
- chmod +x build_host.sh
- ./build_host.sh
+chmod +x build_host.sh
+./build_host.sh
 
 # 3) Run: place host next to managed DLL + runtimeconfig
 cp host ../ManagedLibrary/bin/Release/net9.0/
