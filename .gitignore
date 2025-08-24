@@ -34,6 +34,7 @@ core
 **/TestResults/
 # If you occasionally publish outside bin/, ignore publish too
 **/publish/
+**/build/
 
 # NuGet packages (if you pack locally)
 *.nupkg
